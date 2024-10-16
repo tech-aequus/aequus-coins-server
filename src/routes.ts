@@ -26,5 +26,21 @@ router.post(
   paymentsController.createCheckoutSession
 );
 router.post("/webhook", paymentsController.handleWebhook);
+router.get(
+  "/payments/transaction-history",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.getTransactionHistory
+);
+router.post(
+  "/payments/transfer",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.transferCoins
+);
+router.get("/payments/coin-packages", paymentsController.getCoinPackages);
+router.post(
+  "/payments/refund",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.refundTransaction
+);
 
 export default router;
