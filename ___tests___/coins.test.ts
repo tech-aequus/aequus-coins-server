@@ -60,17 +60,17 @@ describe("Coins and Payments Routes", () => {
     });
   });
 
-  // afterAll(async () => {
-  //   // Clean up the test data
-  //   await prisma.transaction.deleteMany({
-  //     where: { userId: { in: [userId, recipientId] } },
-  //   });
-  //   await prisma.user.deleteMany({
-  //     where: { id: { in: [userId, recipientId] } },
-  //   });
-  //   await prisma.coinPackage.deleteMany();
-  //   await prisma.$disconnect();
-  // });
+  afterAll(async () => {
+    // Clean up the test data
+    await prisma.transaction.deleteMany({
+      where: { userId: { in: [userId, recipientId] } },
+    });
+    await prisma.user.deleteMany({
+      where: { id: { in: [userId, recipientId] } },
+    });
+    await prisma.coinPackage.deleteMany();
+    await prisma.$disconnect();
+  });
 
   test("GET /api/total-coins should return total coins for authenticated user", async () => {
     const response = await request(app)

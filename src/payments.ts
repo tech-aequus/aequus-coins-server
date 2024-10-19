@@ -11,37 +11,44 @@ const prisma = new PrismaClient();
 export const createCheckoutSession = async (
   req: AuthenticatedRequest,
   res: Response
-): Promise<Void> => {
+): Promise<void> => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { priceId } = req.body;
+    const { numberOfCoins } = req.body;
 
-    const coinPackage = await prisma.coinPackage.findFirst({
-      where: { stripePriceId: priceId },
-    });
-
-    if (!coinPackage) {
-      return res.status(404).json({ error: "Coin package not found" });
+    // Validate input
+    const coins = parseInt(numberOfCoins);
+    if (isNaN(coins) || coins <= 0) {
+      return res.status(400).json({ error: "Invalid number of coins" });
     }
 
+    // Create checkout session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
         {
-          price: priceId,
-          quantity: 1,
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Coins Purchase",
+              description: `${coins} coins at $1 each`,
+            },
+            unit_amount: 100, // $1.00 in cents
+          },
+          quantity: coins,
         },
       ],
       mode: "payment",
-      success_url: `http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `http://localhost:3000/cancel`,
+      success_url: `${process.env.FRONTEND_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/index.html`,
       client_reference_id: userId,
       metadata: {
-        coinAmount: coinPackage.coinAmount.toString(),
+        userId: userId,
+        coinAmount: coins.toString(),
       },
     });
 
@@ -51,49 +58,99 @@ export const createCheckoutSession = async (
     res.status(500).json({ error: "Error creating checkout session" });
   }
 };
+
+export const verifySession = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status === "paid") {
+      res.json({
+        success: true,
+        message: "Payment successful",
+      });
+    } else {
+      res.json({
+        success: false,
+        message: "Payment pending or failed",
+      });
+    }
+  } catch (error) {
+    console.error("Error verifying session:", error);
+    res.status(500).json({ error: "Error verifying payment session" });
+  }
+};
 export const handleWebhook = async (
   req: Request,
   res: Response
-): Promise<Void> => {
-  const sig = req.headers["stripe-signature"] as string;
+): Promise<void> => {
+  const event = req.body;
 
+  console.log(
+    `[${new Date().toISOString()}] Received webhook event:`,
+    event.type
+  );
+
+  // Handle the event
   try {
-    const event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET as string
-    );
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const userId = session.client_reference_id;
-      const coinAmount = parseInt(session.metadata?.coinAmount || "0", 10);
-
-      if (userId && coinAmount > 0) {
-        await prisma.user.update({
-          where: { id: userId },
-          data: {
-            coins: { increment: coinAmount },
-          },
-        });
-
-        await prisma.transaction.create({
-          data: {
-            userId,
-            type: "PURCHASE",
-            amount: coinAmount,
-            description: `Purchased ${coinAmount} coins`,
-          },
-        });
-      }
+    switch (event.type) {
+      case "checkout.session.completed":
+        const session = event.data.object as Stripe.Checkout.Session;
+        await handleSuccessfulPayment(session);
+        break;
+      // ... handle other event types as needed
+      default:
+        console.log(`Unhandled event type ${event.type}`);
     }
 
+    // Return a response to acknowledge receipt of the event
     res.json({ received: true });
   } catch (error) {
-    console.error("Error processing webhook:", error);
-    res.status(400).send(`Webhook Error: ${error.message}`);
+    console.error(`Error processing webhook:`, error);
+    res.status(500).json({ error: "Error processing webhook" });
   }
 };
+
+async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
+  const userId = session.metadata?.userId;
+  const coinAmount = parseInt(session.metadata?.coinAmount || "0", 10);
+
+  if (!userId || coinAmount <= 0) {
+    console.error("Invalid metadata in session:", session.id);
+    return;
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Update user's coins
+      await tx.user.update({
+        where: { id: userId },
+        data: { coins: { increment: coinAmount } },
+      });
+
+      // Create transaction record
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: "PURCHASE",
+          amount: coinAmount,
+          description: `Purchased ${coinAmount} coins`,
+          sessionId: session.id, // Store the Stripe session ID
+        },
+      });
+    });
+
+    console.log(`Successfully processed payment for user ${userId}`);
+  } catch (error) {
+    console.error("Error processing payment:", error);
+    // Implement error handling (e.g., retry logic or manual intervention)
+  }
+}
+
 export const getTransactionHistory = async (
   req: AuthenticatedRequest,
 
