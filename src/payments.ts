@@ -37,7 +37,7 @@ export const createCheckoutSession = async (
               name: "Coins Purchase",
               description: `${coins} coins at $1 each`,
             },
-            unit_amount: 100, // $1.00 in cents
+            unit_amount: 100,
           },
           quantity: coins,
         },
@@ -126,20 +126,17 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Update user's coins
       await tx.user.update({
         where: { id: userId },
         data: { coins: { increment: coinAmount } },
       });
-
-      // Create transaction record
       await tx.transaction.create({
         data: {
           userId,
           type: "PURCHASE",
           amount: coinAmount,
           description: `Purchased ${coinAmount} coins`,
-          sessionId: session.id, // Store the Stripe session ID
+          sessionId: session.id,
         },
       });
     });
@@ -147,13 +144,11 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
     console.log(`Successfully processed payment for user ${userId}`);
   } catch (error) {
     console.error("Error processing payment:", error);
-    // Implement error handling (e.g., retry logic or manual intervention)
   }
 }
 
 export const getTransactionHistory = async (
   req: AuthenticatedRequest,
-
   res: Response
 ): Promise<void> => {
   try {
@@ -161,20 +156,16 @@ export const getTransactionHistory = async (
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
-
     const transactions = await prisma.transaction.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
     });
-
     const totalCount = await prisma.transaction.count({ where: { userId } });
-
     res.json({
       transactions,
       currentPage: page,
@@ -188,7 +179,6 @@ export const getTransactionHistory = async (
 
 export const transferCoins = async (
   req: AuthenticatedRequest,
-
   res: Response
 ): Promise<void> => {
   try {
