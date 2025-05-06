@@ -40,6 +40,16 @@ export const spendCoins = async (
       res.status(401).json({ error: "User not authenticated" });
     }
     const { amount } = req.body;
+    const u = await prisma.user.findUnique({
+	where:{id:userId},
+	select:{coins:true},
+    });
+    if(!u){
+	throw new Error("User Not Found");
+	}
+    if(u.coins<amount){
+        throw new Error("Insufficient Coins");
+    }
     const user = await prisma.user.update({
       where: { id: userId },
       data: {

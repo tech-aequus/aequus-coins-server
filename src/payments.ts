@@ -37,14 +37,14 @@ export const createCheckoutSession = async (
               name: "Coins Purchase",
               description: `${coins} coins at $1 each`,
             },
-            unit_amount: 100,
+            unit_amount: 100, // $1.00 in cents
           },
           quantity: coins,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/paymentcancelled`,
+      success_url: `${process.env.FRONTEND_URL}/store`,
+      cancel_url: `${process.env.FRONTEND_URL}/store`,
       client_reference_id: userId,
       metadata: {
         userId: userId,
@@ -126,17 +126,20 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Update user's coins
       await tx.user.update({
         where: { id: userId },
         data: { coins: { increment: coinAmount } },
       });
+
+      // Create transaction record
       await tx.transaction.create({
         data: {
           userId,
           type: "PURCHASE",
           amount: coinAmount,
           description: `Purchased ${coinAmount} coins`,
-          sessionId: session.id,
+          sessionId: session.id, // Store the Stripe session ID
         },
       });
     });
@@ -144,11 +147,13 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
     console.log(`Successfully processed payment for user ${userId}`);
   } catch (error) {
     console.error("Error processing payment:", error);
+    // Implement error handling (e.g., retry logic or manual intervention)
   }
 }
 
 export const getTransactionHistory = async (
   req: AuthenticatedRequest,
+
   res: Response
 ): Promise<void> => {
   try {
@@ -156,16 +161,20 @@ export const getTransactionHistory = async (
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
     }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
+
     const transactions = await prisma.transaction.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
     });
+
     const totalCount = await prisma.transaction.count({ where: { userId } });
+
     res.json({
       transactions,
       currentPage: page,
@@ -177,8 +186,56 @@ export const getTransactionHistory = async (
   }
 };
 
+export const addCoins = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { amount, reason } = req.body;
+
+    // Validate amount
+    const coins = parseInt(amount);
+    if (isNaN(coins) || coins <= 0) {
+      return res.status(400).json({ error: "Invalid number of coins" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Update user's coin balance
+      await tx.user.update({
+        where: { id: userId },
+        data: { coins: { increment: coins } },
+      });
+
+      // Create a transaction record
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: "REWARD",
+          amount: coins,
+          description: reason || `Reward: ${coins} coins added`,
+        },
+      });
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully added ${coins} coins to user account`,
+    });
+  } catch (error) {
+    console.error("Error adding coins:", error);
+    res.status(500).json({ error: "Error adding coins to user account" });
+  }
+};
+
+
 export const transferCoins = async (
   req: AuthenticatedRequest,
+
   res: Response
 ): Promise<void> => {
   try {

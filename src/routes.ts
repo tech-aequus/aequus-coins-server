@@ -86,4 +86,10 @@ router.post(
 
 router.get("/verify-session/:sessionId", paymentsController.verifySession);
 
+router.post(
+  "/add-coins",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.addCoins
+);
+
 export default router;

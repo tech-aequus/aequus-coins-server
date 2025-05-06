@@ -11,8 +11,10 @@ const port = process.env.PORT || 3000;
 
 // CORS configuration
 const corsOptions = {
-  origin: ["http://localhost:3000", "http://localhost:5500"], // Allow only your frontend origin
-  optionsSuccessStatus: 200,
+  origin: ["http://localhost:3000", "https://app.aequusplay.com","https://app.aequusplay.com/","https://aequusplay.com","https://www.aequusplay.com","https://coins.aequusplay.com" ], 
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 };
 
 app.use(cors(corsOptions));
