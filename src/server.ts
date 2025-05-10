@@ -10,8 +10,21 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // CORS configuration
-const corsOptions = {
-  origin: ["http://localhost:3000", "https://app.aequusplay.com","https://app.aequusplay.com/","https://aequusplay.com","https://www.aequusplay.com","https://coins.aequusplay.com" ], 
+interface CorsOptions {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => void;
+  credentials: boolean;
+  methods: string[];
+  allowedHeaders: string[];
+}
+
+const corsOptions: CorsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin || ["http://localhost:3000", "https://app.aequusplay.com", "https://aequusplay.com"].includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
@@ -23,7 +36,12 @@ app.use(express.static(path.join(__dirname, "public")));
 app.set("timeout", 120000);
 
 app.use("/api", routes);
-
+app.use((req, res, next) => {
+  console.log(`Incoming request: ${req.method} ${req.url}`);
+  console.log("Headers:", req.headers);
+  console.log("Body:", req.body);
+  next();
+});
 app.use(
   (
     err: Error,
