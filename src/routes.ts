@@ -92,4 +92,10 @@ router.post(
   paymentsController.addCoins
 );
 
+router.put(
+  "/add-stripe-coins",
+  authController.authenticateToken as express.RequestHandler,
+  coinsController.addStripeCoins
+);
+
 export default router;

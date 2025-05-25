@@ -63,3 +63,32 @@ export const spendCoins = async (
     next(error);
   }
 };
+
+
+export const addStripeCoins = async (
+  req: AuthenticatedRequest,
+
+  res: Response,
+
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: "User not authenticated" });
+    }
+    const { amount } = req.body;
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        coins: {
+          increment: amount,
+        },
+      },
+    });
+    console.log(`User ${userId} added ${amount} coins via Stripe`);
+    res.json({ newBalance: user.coins });
+  } catch (error) {
+    next(error);
+  }
+};
