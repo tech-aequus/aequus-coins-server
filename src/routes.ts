@@ -7,23 +7,19 @@ import { AuthenticatedRequest } from "./auth";
 const router = express.Router();
 
 // Place webhook route first, before any other middleware
-// In routes.ts
 router.post(
   "/webhook",
   express.raw({
     type: "application/json",
     verify: (req, res, buf) => {
-      // Store raw body for signature verification
       (req as any).rawBody = buf;
     },
   }),
   (req, res, next) => {
     console.log(`[${new Date().toISOString()}] Webhook route hit`);
 
-    // Configure request
     req.setTimeout(30000);
 
-    // Less strict content type checking
     const contentType = req.headers["content-type"] || "";
     if (!contentType.includes("application/json")) {
       console.error(
@@ -37,7 +33,6 @@ router.post(
   },
   paymentsController.handleWebhook
 );
-// Make sure this comes AFTER the webhook route
 
 // JSON parser middleware for all other routes
 router.use(express.json());
@@ -98,4 +93,17 @@ router.put(
   coinsController.addStripeCoins
 );
 
+router.post(
+  "/cashout",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.requestCashout
+);
+router.post(
+  "/connect-account",
+  authController.authenticateToken as express.RequestHandler,
+  paymentsController.createConnectAccount
+);
+router.post("/add-funds", paymentsController.addFundsForTesting);
+router.post("/create-test-clock", paymentsController.createTestClock);
+router.post("/advance-test-clock", paymentsController.advanceTestClock);
 export default router;

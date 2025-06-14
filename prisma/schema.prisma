@@ -11,11 +11,12 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(uuid())
-  email        String        @unique
-  password     String
-  coins        Int           @default(0)
-  transactions Transaction[]
+  id              String        @id @default(uuid())
+  email           String        @unique
+  password        String
+  coins           Int           @default(0)
+  transactions    Transaction[]
+  stripeAccountId String?       // <-- Add this line
 }
 
 model Transaction {

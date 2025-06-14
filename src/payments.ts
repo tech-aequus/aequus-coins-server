@@ -3,7 +3,10 @@ import { Request, Response } from "express";
 import Stripe from "stripe";
 import { PrismaClient } from "@prisma/client";
 import dotenv from "dotenv";
+import { AuthenticatedRequest } from "./auth";
+
 dotenv.config();
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
   apiVersion: "2024-09-30.acacia",
 });
@@ -85,6 +88,7 @@ export const verifySession = async (
     res.status(500).json({ error: "Error verifying payment session" });
   }
 };
+
 export const handleWebhook = async (
   req: Request,
   res: Response
@@ -103,15 +107,13 @@ export const handleWebhook = async (
         const session = event.data.object as Stripe.Checkout.Session;
         await handleSuccessfulPayment(session);
         break;
-      // ... handle other event types as needed
       default:
         console.log(`Unhandled event type ${event.type}`);
     }
 
-    // Return a response to acknowledge receipt of the event
     res.json({ received: true });
   } catch (error) {
-    console.error(`Error processing webhook:`, error);
+    console.error("Error processing webhook:", error);
     res.status(500).json({ error: "Error processing webhook" });
   }
 };
@@ -127,20 +129,18 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Update user's coins
       await tx.user.update({
         where: { id: userId },
         data: { coins: { increment: coinAmount } },
       });
 
-      // Create transaction record
       await tx.transaction.create({
         data: {
           userId,
           type: "PURCHASE",
           amount: coinAmount,
           description: `Purchased ${coinAmount} coins`,
-          sessionId: session.id, // Store the Stripe session ID
+          sessionId: session.id,
         },
       });
     });
@@ -148,13 +148,11 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
     console.log(`Successfully processed payment for user ${userId}`);
   } catch (error) {
     console.error("Error processing payment:", error);
-    // Implement error handling (e.g., retry logic or manual intervention)
   }
 }
 
 export const getTransactionHistory = async (
   req: AuthenticatedRequest,
-
   res: Response
 ): Promise<void> => {
   try {
@@ -199,20 +197,17 @@ export const addCoins = async (
 
     const { amount, reason } = req.body;
 
-    // Validate amount
     const coins = parseInt(amount);
     if (isNaN(coins) || coins <= 0) {
       return res.status(400).json({ error: "Invalid number of coins" });
     }
 
     await prisma.$transaction(async (tx) => {
-      // Update user's coin balance
       await tx.user.update({
         where: { id: userId },
         data: { coins: { increment: coins } },
       });
 
-      // Create a transaction record
       await tx.transaction.create({
         data: {
           userId,
@@ -233,10 +228,8 @@ export const addCoins = async (
   }
 };
 
-
 export const transferCoins = async (
   req: AuthenticatedRequest,
-
   res: Response
 ): Promise<void> => {
   try {
@@ -299,7 +292,7 @@ export const getCoinPackages = async (req: Request, res: Response) => {
 export const refundTransaction = async (
   req: AuthenticatedRequest,
   res: Response
-): Promise<Void> => {
+): Promise<void> => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -325,14 +318,6 @@ export const refundTransaction = async (
 
     const refundAmount = Math.min(transaction.amount, user.coins);
 
-    // Process the refund with Stripe
-    // Note: You'll need to store the Stripe PaymentIntent ID with each transaction
-    // for this to work. This is just a placeholder.
-    // const stripeRefund = await stripe.refunds.create({
-    //   payment_intent: transaction.stripePaymentIntentId,
-    //   amount: refundAmount * 100, // Stripe uses cents
-    // });
-
     await prisma.$transaction(async (prisma) => {
       await prisma.user.update({
         where: { id: userId },
@@ -357,5 +342,228 @@ export const refundTransaction = async (
   } catch (error) {
     console.error("Error processing refund:", error);
     res.status(500).json({ error: "Error processing refund" });
+  }
+};
+
+export const requestCashout = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { amount } = req.body;
+    const coins = parseInt(amount);
+    if (isNaN(coins) || coins <= 0) {
+      return res.status(400).json({ error: "Invalid number of coins" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, coins: true, stripeAccountId: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.coins < coins) {
+      return res.status(400).json({ error: "Insufficient coins" });
+    }
+
+    if (!user.stripeAccountId) {
+      return res.status(400).json({
+        error: "No bank account linked. Please set up a payment account.",
+      });
+    }
+
+    // Convert coins to USD cents (1 coin = $1 = 100 cents)
+    const amountInCents = coins * 100;
+
+    // Create a Stripe transfer to the user's connected account
+    const transfer = await stripe.transfers.create({
+      amount: amountInCents,
+      currency: "gbp",
+      destination: user.stripeAccountId,
+      description: `Cash out ${coins} coins for user ${userId}`,
+    });
+
+    // Update user coins and create transaction record
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { coins: { decrement: coins } },
+      });
+
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: "CASHOUT",
+          amount: -coins,
+          description: `Cashed out ${coins} coins to bank account`,
+        },
+      });
+    });
+
+    const updatedUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { coins: true },
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully requested cash out of ${coins} coins`,
+      newBalance: updatedUser?.coins,
+    });
+  } catch (error) {
+    console.error("Error processing cash out:", error);
+    res.status(500).json({ error: "Error processing cash out" });
+  }
+};
+
+export const createConnectAccount = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, stripeAccountId: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    let stripeAccountId = user.stripeAccountId;
+
+    // Create a new Connected Account if none exists
+    if (!stripeAccountId) {
+      const account = await stripe.accounts.create({
+        type: "express",
+        email: user.email,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+      });
+
+      stripeAccountId = account.id;
+
+      // Update user with stripeAccountId
+      await prisma.user.update({
+        where: { id: userId },
+        data: { stripeAccountId },
+      });
+    }
+
+    // Create an Account Link for onboarding
+    const accountLink = await stripe.accountLinks.create({
+      account: stripeAccountId,
+      refresh_url: `${process.env.FRONTEND_URL}/store`,
+      return_url: `${process.env.FRONTEND_URL}/store`,
+      type: "account_onboarding",
+    });
+
+    res.json({ url: accountLink.url });
+  } catch (error) {
+    console.error("Error creating Connect account:", error);
+    res.status(500).json({ error: "Error setting up payment account" });
+  }
+};
+// export const addFundsForTesting = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     const charge = await stripe.charges.create({
+//       amount: 100000, // £1000.00 in pence
+//       currency: "gbp",
+//       source: "tok_visa", // Simulates a successful charge; funds are immediately available
+//       description: "Adding funds for testing cash out",
+//     });
+//     res.json({ success: true, charge });
+//   } catch (error) {
+//     console.error("Error adding funds:", error);
+//     res.status(500).json({ error: "Failed to add funds" });
+//   }
+// };
+export const addFundsForTesting = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    console.log("Creating charge with pre-existing test token...");
+
+    const charge = await stripe.charges.create({
+      amount: 100000, // £1000.00 in pence
+      currency: "gbp",
+      source: "tok_visa", // Use a pre-existing test token
+      description:
+        "Adding funds for testing cash out with immediate availability",
+      statement_descriptor: "TEST FUNDS",
+      capture: true,
+    });
+
+    console.log("Charge created successfully:", charge);
+    res.json({ success: true, charge });
+  } catch (error: any) {
+    console.error("Error adding funds:", error);
+    res.status(500).json({
+      error: error.message || "Failed to add funds",
+    });
+  }
+};
+
+export const createTestClock = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const testClock = await stripe.testHelpers.testClocks.create({
+      frozen_time: new Date("2025-06-12T18:34:00Z").getTime() / 1000, // Current time in UTC (12:04 AM IST = 18:34 UTC on June 12)
+      name: "Test clock for advancing payout schedule",
+    });
+
+    console.log("Test clock created:", testClock);
+    res.json({ success: true, testClockId: testClock.id });
+  } catch (error: any) {
+    console.error("Error creating test clock:", error);
+    res.status(500).json({
+      error: error.message || "Failed to create test clock",
+    });
+  }
+};
+
+export const advanceTestClock = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { testClockId } = req.body;
+
+    if (!testClockId) {
+      return res.status(400).json({ error: "Test clock ID required" });
+    }
+
+    const advancedClock = await stripe.testHelpers.testClocks.advance(
+      testClockId,
+      {
+        frozen_time: new Date("2025-06-19T18:34:00Z").getTime() / 1000, // Advance to June 19, 2025
+      }
+    );
+
+    console.log("Test clock advanced:", advancedClock);
+    res.json({ success: true, advancedClock });
+  } catch (error: any) {
+    console.error("Error advancing test clock:", error);
+    res.status(500).json({
+      error: error.message || "Failed to advance test clock",
+    });
   }
 };
